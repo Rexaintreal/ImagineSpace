@@ -1,0 +1,6 @@
+data/sample_footage/*.mp4
+frames/
+*.ply
+__pycache__/
+*.pth
+vram_log.csv
