@@ -48,7 +48,7 @@ for context only.
 - The point cloud viewer (viser) first showed nothing but a small camera icon. Fixed this by switching playback mode from 4D (single frame) to 3D (all frames) and increasing the point size.
 - After that, the point cloud showed up properly, with clear shapes for the ground, trees, and camera path. See the screenshot below.
 
-![CUT3R point cloud output](ImagineSpace/images/cut3r.png)
+![CUT3R point cloud output](https://github.com/Rexaintreal/ImagineSpace/blob/main/images/cut3r.png)
 
 ## Result
 - Runtime: 4.62 seconds total, or 0.16 seconds per frame. This was on the PyTorch fallback, not the compiled CUDA kernel.
