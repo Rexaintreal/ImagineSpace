@@ -14,21 +14,21 @@
   with `time python demo.py ...`.
 
 ## Result
-- Runtime: TBD — inference in progress at time of writing
-- VRAM peak: TBD — logger running, idle baseline confirmed ~100-150 MiB
-- Scale check: TBD — pending point cloud output
+- Runtime: TBD, inference in progress at time of writing
+- VRAM peak: TBD, logger running, idle baseline confirmed ~100-150 MiB
+- Scale check: TBD, pending point cloud output
 
 ## Reference (not our measurement)
 Published CUT3R benchmark (Mem3R paper, arXiv:2604.07279): 26 fps, 
 7930 MiB VRAM, 512 checkpoint, RTX PRO 6000, 512x384 res, 7-Scenes 
-dataset. Not comparable to our 224-checkpoint / 6GB setup — cited 
+dataset. Not comparable to our 224-checkpoint / 6GB setup, cited 
 for context only.
 
 ## Blockers
 - Inference did not complete within submission window; run left 
   going in background.
 - WSL terminal juggling (VRAM logger vs inference terminal) added 
-  friction — worth scripting into one process next time.
+  friction; worth scripting into one process next time.
 
 ## Next
 - Capture actual runtime, peak VRAM, and scale-accuracy % once 
@@ -78,32 +78,37 @@ for context only.
 - Confirmed data formats first: `camera/*.npz` (`pose`, `intrinsics`), 
   `depth/*.npy` and `conf/*.npy` (224x224), `color/*.png`.
 - First full run: 631,117 points merged across 29 frames at 
-  `conf_thresh=3.0` (frame 0 contributed 0 points — it's the reference 
+  `conf_thresh=3.0` (frame 0 contributed 0 points, it's the reference 
   frame). Poisson mesh came out at 568,681 vertices / 1,138,654 triangles, 
   but visually the mesh was blobby and streaky with a lot of ghosting.
 - Open3D's GUI visualizer (`draw_geometries`) wouldn't open a window at 
-  all under WSL — EGL/Zink errors (`MESA: error: ZINK: failed to choose 
+  all under WSL; EGL/Zink errors (`MESA: error: ZINK: failed to choose 
   pdev`), even after forcing NVIDIA via `__NV_PRIME_RENDER_OFFLOAD` env 
   vars. Worked around it with an offscreen render 
   (`create_window(visible=False)` + `capture_screen_image`) to get PNG 
   screenshots instead of a live window.
 - Screenshotted the raw point cloud (pre-meshing) to isolate whether the 
-  problem was in the back-projection/poses or in Poisson itself — the 
+  problem was in the back-projection/poses or in Poisson itself; the 
   point cloud alone was clean and coherent, so the issue was meshing 
   parameters, not the geometry pipeline.
+
+![Point cloud view](https://github.com/Rexaintreal/ImagineSpace/blob/main/images/pointcloud_view.png)
+
 - Root cause: `voxel_size=0.01` was tiny relative to the scene's actual 
   scale (bounding box ~55 x 30 x 131 units), so the normal-estimation 
-  radius derived from it (`voxel_size * 4 = 0.04`) was meaningless — 
+  radius derived from it (`voxel_size * 4 = 0.04`) was meaningless; 
   normals were basically noise, which is what Poisson was faithfully 
   reproducing as blobby surface.
 - Reran with `voxel_size=0.5`: top surface (vegetation/rock-like 
   structure) came out clean and recognizable. But a blocky white 
-  "pedestal" artifact appeared underneath — expected, since CUT3R only 
+  "pedestal" artifact appeared underneath, expected, since CUT3R only 
   captured a partial, front-facing scan (not a closed 360° loop) and 
   Poisson assumes a watertight surface, so it invents geometry to seal 
   the open bottom.
 - Bumped `density_trim_quantile` from 0.02 to 0.15 to strip more of that 
   low-density, inferred-not-observed geometry.
+
+![Mesh view](https://github.com/Rexaintreal/ImagineSpace/blob/main/images/mesh_view.png)
 
 ## Result
 - Point cloud: 631,117 points merged from 29 frames, confirmed clean via 
@@ -115,22 +120,22 @@ for context only.
   end-to-end on the same 29-frame drone clip from 09-15.
 
 ## Blockers
-- Open3D's live GUI visualizer does not work in this WSL/Optimus setup 
+- Open3D's live GUI visualizer does not work in this WSL/Optimus setup; 
   offscreen rendering is the reliable path for now.
 - Poisson reconstruction is the wrong tool for a partial/open-surface 
   scan like this one; it will keep inventing closing geometry (the 
   pedestal) regardless of trim quantile, unless the scan itself is a 
   full loop.
 - Haven't yet confirmed visually whether `density_trim=0.15` fully 
-  removed the pedestal without eating real geometry screenshot pending.
-- nvcc/CUDA RoPE kernel issue from 08-30/09-15 still unresolved still 
+  removed the pedestal without eating real geometry; screenshot pending.
+- nvcc/CUDA RoPE kernel issue from 08-30/09-15 still unresolved; still 
   running on the PyTorch fallback.
 
 ## Next
 - Screenshot the `density_trim=0.15` mesh and check if the pedestal is 
   gone.
 - If the pedestal persists, switch from Poisson to ball-pivoting or 
-  alpha-shape reconstruction better suited to open, partial-view 
+  alpha-shape reconstruction, better suited to open, partial-view 
   surfaces since neither assumes watertight closure.
 - Revisit the nvcc PATH conflict (conda's 12.1 vs system 13.3) to get 
   the compiled CUDA RoPE kernel running instead of the fallback.
