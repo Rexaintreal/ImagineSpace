@@ -66,3 +66,73 @@ for context only.
 - Fill in the problem statement's "Desired Output" and "Evaluation Criteria" table using today's real numbers (0.16 seconds per frame, clear separation between terrain, vegetation, and road).
 - After the submission, go back and fix the nvcc issue so the compiled CUDA RoPE kernel can run, to get a real-time speed number.
 - Try a lower `vis_threshold` to check if the lighter, washed-out terrain area is just noise or if it holds usable data.
+
+# 2026-09-22
+
+## What we tried
+- Picked up from the 09-15 point cloud output and wrote `generate_mesh.py`: 
+  back-projects each frame's depth map into world space using its own 
+  camera-to-world pose (4x4) and intrinsics (3x3 K matrix), merges all 
+  29 frames into one colored point cloud, then runs Poisson surface 
+  reconstruction to get an actual mesh instead of just points.
+- Confirmed data formats first: `camera/*.npz` (`pose`, `intrinsics`), 
+  `depth/*.npy` and `conf/*.npy` (224x224), `color/*.png`.
+- First full run: 631,117 points merged across 29 frames at 
+  `conf_thresh=3.0` (frame 0 contributed 0 points — it's the reference 
+  frame). Poisson mesh came out at 568,681 vertices / 1,138,654 triangles, 
+  but visually the mesh was blobby and streaky with a lot of ghosting.
+- Open3D's GUI visualizer (`draw_geometries`) wouldn't open a window at 
+  all under WSL — EGL/Zink errors (`MESA: error: ZINK: failed to choose 
+  pdev`), even after forcing NVIDIA via `__NV_PRIME_RENDER_OFFLOAD` env 
+  vars. Worked around it with an offscreen render 
+  (`create_window(visible=False)` + `capture_screen_image`) to get PNG 
+  screenshots instead of a live window.
+- Screenshotted the raw point cloud (pre-meshing) to isolate whether the 
+  problem was in the back-projection/poses or in Poisson itself — the 
+  point cloud alone was clean and coherent, so the issue was meshing 
+  parameters, not the geometry pipeline.
+- Root cause: `voxel_size=0.01` was tiny relative to the scene's actual 
+  scale (bounding box ~55 x 30 x 131 units), so the normal-estimation 
+  radius derived from it (`voxel_size * 4 = 0.04`) was meaningless — 
+  normals were basically noise, which is what Poisson was faithfully 
+  reproducing as blobby surface.
+- Reran with `voxel_size=0.5`: top surface (vegetation/rock-like 
+  structure) came out clean and recognizable. But a blocky white 
+  "pedestal" artifact appeared underneath — expected, since CUT3R only 
+  captured a partial, front-facing scan (not a closed 360° loop) and 
+  Poisson assumes a watertight surface, so it invents geometry to seal 
+  the open bottom.
+- Bumped `density_trim_quantile` from 0.02 to 0.15 to strip more of that 
+  low-density, inferred-not-observed geometry.
+
+## Result
+- Point cloud: 631,117 points merged from 29 frames, confirmed clean via 
+  offscreen screenshot.
+- Mesh (voxel=0.5, poisson_depth=9, density_trim=0.15): 209,548 vertices, 
+  410,740 triangles down from 568,681 / 1,138,654 at the looser 0.02 
+  trim, consistent with more pedestal geometry being cut.
+- Full pipeline (pose+depth → merged cloud → Poisson mesh) runs 
+  end-to-end on the same 29-frame drone clip from 09-15.
+
+## Blockers
+- Open3D's live GUI visualizer does not work in this WSL/Optimus setup 
+  offscreen rendering is the reliable path for now.
+- Poisson reconstruction is the wrong tool for a partial/open-surface 
+  scan like this one; it will keep inventing closing geometry (the 
+  pedestal) regardless of trim quantile, unless the scan itself is a 
+  full loop.
+- Haven't yet confirmed visually whether `density_trim=0.15` fully 
+  removed the pedestal without eating real geometry screenshot pending.
+- nvcc/CUDA RoPE kernel issue from 08-30/09-15 still unresolved still 
+  running on the PyTorch fallback.
+
+## Next
+- Screenshot the `density_trim=0.15` mesh and check if the pedestal is 
+  gone.
+- If the pedestal persists, switch from Poisson to ball-pivoting or 
+  alpha-shape reconstruction better suited to open, partial-view 
+  surfaces since neither assumes watertight closure.
+- Revisit the nvcc PATH conflict (conda's 12.1 vs system 13.3) to get 
+  the compiled CUDA RoPE kernel running instead of the fallback.
+- Eventually capture real VRAM peak and scale-accuracy numbers, still 
+  outstanding since 08-30.
