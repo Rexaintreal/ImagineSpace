@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# ============================================================
+# Imagine Space — OUTDOOR demo runner (presenter-paced)
+# Video preview stage removed (shown manually beforehand).
+# You control pacing with Enter after you're done showing the
+# live point cloud viewer.
+# ============================================================
+set -e
+source ~/miniconda3/etc/profile.d/conda.sh
+conda activate cut3r
+
+FINAL_TEST_DIR="$HOME/final_test/outdoor"
+VIDEO_SRC="$FINAL_TEST_DIR/drone_clip.mp4"
+FRAMES_DIR="$FINAL_TEST_DIR/frames"
+OUTPUT_DIR="$FINAL_TEST_DIR/output"
+MESH_OUT_DIR="$FINAL_TEST_DIR/mesh_out"
+CUT3R_DIR="$HOME/CUT3R"
+FPS=2
+VISER_URL="http://localhost:8080"
+
+banner() {
+  echo ""
+  echo "============================================================"
+  echo "  $1"
+  echo "============================================================"
+  sleep 1
+}
+
+banner "STAGE 1 / 4 — Frame extraction from source video (ffmpeg)"
+mkdir -p "$FRAMES_DIR"
+rm -f "$FRAMES_DIR"/*.jpg 2>/dev/null || true
+ffmpeg -y -i "$VIDEO_SRC" -vf fps=$FPS "$FRAMES_DIR/frame_%04d.jpg"
+echo ""
+echo ">> Extracted $(ls "$FRAMES_DIR" | wc -l) frames at ${FPS} fps into $FRAMES_DIR"
+
+banner "STAGE 2 / 4 — CUT3R inference + live point cloud viewer"
+cd "$CUT3R_DIR"
+python demo.py \
+  --model_path src/cut3r_224_linear_4.pth \
+  --size 224 \
+  --seq_path "$FRAMES_DIR" \
+  --vis_threshold 1.5 \
+  --output_dir "$OUTPUT_DIR" &
+DEMO_PID=$!
+
+echo ">> Inference is running in the background."
+echo ">> Waiting for the viser server to come up before opening the viewer..."
+sleep 3
+xdg-open "$VISER_URL" 2>/dev/null || true
+echo ">> Viewer should now be open in your browser at $VISER_URL"
+echo ">> IMPORTANT: wait until you see '(viser) Connection opened' below before"
+echo ">>            pressing Enter — that confirms output has actually been written."
+echo ">>            Ending it earlier will corrupt this run's output (as happened before)."
+read -p ">> Press Enter ONLY after you've seen the viewer connect and shown it live..." _
+kill "$DEMO_PID" 2>/dev/null || true
+wait "$DEMO_PID" 2>/dev/null || true
+echo ""
+echo ">> CUT3R stage ended. Output should be in $OUTPUT_DIR"
+
+banner "STAGE 3 / 4 — Merging point cloud + Poisson mesh reconstruction"
+cd "$FINAL_TEST_DIR"
+python generate_mesh.py \
+  --output_dir "$OUTPUT_DIR" \
+  --conf_thresh 3.0 \
+  --voxel_size 0.5 \
+  --poisson_depth 9 \
+  --density_trim_quantile 0.15 \
+  --out_pointcloud "$MESH_OUT_DIR/pointcloud.ply" \
+  --out_mesh "$MESH_OUT_DIR/mesh.ply" \
+  --screenshot_pointcloud "$MESH_OUT_DIR/pointcloud_view.png" \
+  --screenshot_mesh "$MESH_OUT_DIR/mesh_view.png"
+echo ""
+echo ">> Point cloud + mesh written to $MESH_OUT_DIR"
+
+banner "STAGE 4 / 4 — Done. Opening result screenshots."
+echo "Point cloud screenshot: $MESH_OUT_DIR/pointcloud_view.png"
+echo "Mesh screenshot:        $MESH_OUT_DIR/mesh_view.png"
+xdg-open "$MESH_OUT_DIR/mesh_view.png" 2>/dev/null || true
+
+banner "OUTDOOR PIPELINE COMPLETE"
